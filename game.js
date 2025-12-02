@@ -334,7 +334,9 @@ function drawReplay(deltaTime) {
     const frame = replay.getPlaybackFrame(deltaTime);
     if (!frame) return;
 
-    UI.replayCtx.clearRect(0, 0, UI.replayCanvas.width, UI.replayCanvas.height);
+    // Fill background explicitly so it appears in the recorded video
+    UI.replayCtx.fillStyle = '#3d5a80';
+    UI.replayCtx.fillRect(0, 0, UI.replayCanvas.width, UI.replayCanvas.height);
     
     const scale = UI.replayCanvas.width / UI.canvas.width;
     UI.replayCtx.save();
