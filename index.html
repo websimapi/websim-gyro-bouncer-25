@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Gyro Bouncer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+        <div id="ui-layer">
+            <div id="loading-screen" class="ui-panel hidden">
+                <p id="loading-status">Loading your profile...</p>
+            </div>
+            <div id="start-screen" class="ui-panel hidden">
+                <h1>Gyro Bouncer</h1>
+                <div id="mobile-instructions">
+                    <p>Tilt your device to move the robot.</p>
+                    <button id="start-button">Tap to Start</button>
+                    <p class="permission-info">You may need to grant motion sensor permissions.</p>
+                </div>
+                <div id="desktop-instructions">
+                    <p>This game must be played on a mobile device.</p>
+                    <p>Scan the QR code to play on your phone.</p>
+                    <canvas id="qr-code"></canvas>
+                </div>
+            </div>
+            <div id="game-over-screen" class="ui-panel hidden">
+                <h1>Game Over</h1>
+                <canvas id="replay-canvas"></canvas>
+                <p>Score: <span id="final-score">0</span></p>
+                <p>High Score: <span id="high-score">0</span></p>
+                <div class="button-group">
+                    <button id="restart-button">Restart</button>
+                    <button id="share-replay-button" class="secondary-button">Share Replay</button>
+                </div>
+            </div>
+            <div id="score-display" class="hidden">Score: <span id="score">0</span></div>
+        </div>
+    </div>
+    <script src="/websim/websim-socket.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://esm.sh/three",
+            "nipplejs": "https://esm.sh/nipplejs",
+            "qrcode": "https://esm.sh/qrcode",
+            "matter-js": "https://esm.sh/matter-js"
+        }
+    }
+    </script>
+    <script type="module" src="main.js"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
