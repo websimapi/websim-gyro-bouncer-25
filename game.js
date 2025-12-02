@@ -22,6 +22,9 @@ let lastTime = 0;
 let controls;
 let audioCtx;
 let bounceSoundBuffer;
+let recorder;
+let recordedChunks = [];
+let recordedBlob = null;
 
 export async function preload(gameControls) {
     controls = gameControls;
@@ -55,6 +58,40 @@ function playSound(buffer) {
     source.buffer = buffer;
     source.connect(audioCtx.destination);
     source.start(0);
+}
+
+function startRecording() {
+    recordedChunks = [];
+    recordedBlob = null;
+    if (typeof MediaRecorder === 'undefined' || !UI.canvas.captureStream) return;
+    
+    try {
+        const stream = UI.canvas.captureStream(30);
+        let mimeType = 'video/webm';
+        if (MediaRecorder.isTypeSupported('video/mp4')) {
+            mimeType = 'video/mp4';
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+            mimeType = 'video/webm;codecs=vp9';
+        }
+        
+        recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
+        recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+        };
+        recorder.onstop = () => {
+             const finalMimeType = recorder.mimeType || mimeType;
+             recordedBlob = new Blob(recordedChunks, { type: finalMimeType });
+        };
+        recorder.start();
+    } catch(e) {
+        console.warn("Failed to start recording", e);
+    }
+}
+
+function stopRecording() {
+    if (recorder && recorder.state === 'recording') {
+        recorder.stop();
+    }
 }
 
 function setupPhysics() {
@@ -136,6 +173,8 @@ export async function init() {
     score = 0;
     UI.updateScore(0);
     
+    startRecording();
+
     UI.showScreen('game');
     if (gameState !== 'playing') {
         gameState = 'playing';
@@ -144,107 +183,57 @@ export async function init() {
 }
 
 export async function shareReplay() {
-    if (!replay || !replay.frames.length) return;
+    if (!recordedBlob) {
+        if (!recorder) {
+             alert("Video recording is not supported on this device.");
+             return;
+        }
+        
+        // Ensure recording is stopped
+        if (recorder.state === 'recording') {
+             recorder.stop();
+             // Brief wait for onstop
+             await new Promise(r => setTimeout(r, 200));
+        }
 
-    // Check MediaRecorder support
-    if (typeof MediaRecorder === 'undefined' || !UI.replayCanvas.captureStream) {
-        alert("Video recording is not supported on this device.");
-        return;
+        if (!recordedBlob) {
+             // Try waiting a bit more
+             for(let i=0; i<5; i++) {
+                if(recordedBlob) break;
+                await new Promise(r => setTimeout(r, 200));
+             }
+             if(!recordedBlob) {
+                alert("Recording not ready yet. Please try again.");
+                return;
+             }
+        }
     }
-
-    const duration = replay.getTotalDuration();
-    if (duration <= 0) return;
 
     const originalText = UI.shareReplayButton.textContent;
     UI.shareReplayButton.disabled = true;
-    UI.shareReplayButton.textContent = "Recording...";
+    UI.shareReplayButton.textContent = "Uploading...";
 
-    // Restart playback to ensure we capture from the beginning
-    replay.startPlayback();
-    
-    // Force one draw call to ensure canvas is ready
-    drawReplay(0);
-
-    const stream = UI.replayCanvas.captureStream(30); // Capture at 30 FPS
-    
-    // Determine supported mime type
-    let mimeType = 'video/webm';
-    if (MediaRecorder.isTypeSupported('video/mp4')) {
-        mimeType = 'video/mp4';
-    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-        mimeType = 'video/webm;codecs=vp9';
-    }
-
-    let recorder;
     try {
-        recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
-    } catch (e) {
-        console.warn("MediaRecorder init failed with options, trying defaults", e);
-        try {
-            recorder = new MediaRecorder(stream);
-        } catch (e2) {
-            console.error("MediaRecorder init failed completely", e2);
-            alert("Could not start recording.");
-            UI.shareReplayButton.disabled = false;
-            UI.shareReplayButton.textContent = originalText;
-            return;
-        }
+        const fileExtension = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File([recordedBlob], `replay.${fileExtension}`, { type: recordedBlob.type });
+
+        const url = await window.websim.upload(file);
+        
+        await window.websim.postComment({
+            content: `Check out my replay! Score: ${score}`,
+            images: [url]
+        });
+        
+        UI.shareReplayButton.textContent = "Shared!";
+        setTimeout(() => {
+             UI.shareReplayButton.disabled = false;
+             UI.shareReplayButton.textContent = originalText;
+        }, 2000);
+    } catch (error) {
+        console.error("Error sharing replay:", error);
+        UI.shareReplayButton.textContent = "Error";
+        UI.shareReplayButton.disabled = false;
     }
-
-    const chunks = [];
-
-    recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    recorder.onerror = (e) => {
-        console.error("Recorder error:", e);
-    };
-
-    recorder.onstop = async () => {
-        if (chunks.length === 0) {
-            console.error("No video data recorded");
-            UI.shareReplayButton.textContent = "Error";
-            setTimeout(() => {
-                UI.shareReplayButton.disabled = false;
-                UI.shareReplayButton.textContent = originalText;
-            }, 2000);
-            return;
-        }
-
-        UI.shareReplayButton.textContent = "Uploading...";
-        const finalMimeType = recorder.mimeType || mimeType || 'video/webm';
-        const blob = new Blob(chunks, { type: finalMimeType });
-        const fileExtension = finalMimeType.includes('mp4') ? 'mp4' : 'webm';
-        const file = new File([blob], `replay.${fileExtension}`, { type: finalMimeType });
-
-        try {
-            // Upload the video file
-            const url = await window.websim.upload(file);
-            
-            // Post comment with the video embedded
-            await window.websim.postComment({
-                content: `Check out my replay! Score: ${score}`,
-                images: [url]
-            });
-            
-            UI.shareReplayButton.textContent = "Shared!";
-            UI.shareReplayButton.disabled = false;
-        } catch (error) {
-            console.error("Error sharing replay:", error);
-            UI.shareReplayButton.textContent = "Error";
-            UI.shareReplayButton.disabled = false;
-        }
-    };
-
-    recorder.start();
-
-    // Stop recording after the exact duration of the replay
-    setTimeout(() => {
-        if (recorder.state === 'recording') {
-            recorder.stop();
-        }
-    }, duration * 1000 + 200);
 }
 
 function update(deltaTime) {
@@ -282,6 +271,7 @@ function update(deltaTime) {
                 playerBounds.max.y > spikeBounds.min.y &&
                 playerBounds.min.y < spikeBounds.max.y) {
                     gameState = 'gameOver';
+                    stopRecording();
                     UI.showScreen('over', score, replay);
                     return; // Exit update loop early
             }
@@ -306,6 +296,7 @@ function update(deltaTime) {
     
     if (!inSafeZone && player.body.position.y > cameraY + UI.canvas.height + player.height) {
         gameState = 'gameOver';
+        stopRecording();
         UI.showScreen('over', score, replay);
     }
 }
