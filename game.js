@@ -222,9 +222,10 @@ export async function shareReplay() {
             // Upload the video file
             const url = await window.websim.upload(file);
             
-            // Post comment with the video link
+            // Post comment with the video embedded
             await window.websim.postComment({
-                content: `Check out my replay! Score: ${score}\n\n[Watch Replay](${url})`,
+                content: `Check out my replay! Score: ${score}`,
+                images: [url]
             });
             
             UI.shareReplayButton.textContent = "Shared!";
