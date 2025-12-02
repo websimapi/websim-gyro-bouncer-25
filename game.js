@@ -25,6 +25,9 @@ let bounceSoundBuffer;
 let recorder;
 let recordedChunks = [];
 let recordedBlob = null;
+let uploadPromise = null;
+let uploadedVideoUrl = null;
+let currentGameId = 0;
 
 export async function preload(gameControls) {
     controls = gameControls;
@@ -78,9 +81,30 @@ function startRecording() {
         recorder.ondataavailable = (e) => {
             if (e.data && e.data.size > 0) recordedChunks.push(e.data);
         };
+        
+        const thisGameId = currentGameId;
         recorder.onstop = () => {
              const finalMimeType = recorder.mimeType || mimeType;
              recordedBlob = new Blob(recordedChunks, { type: finalMimeType });
+
+             // Start background upload immediately
+             const fileExtension = finalMimeType.includes('mp4') ? 'mp4' : 'webm';
+             const file = new File([recordedBlob], `replay.${fileExtension}`, { type: finalMimeType });
+             
+             console.log("Starting background upload of replay...");
+             uploadPromise = window.websim.upload(file)
+                 .then(url => {
+                     // Only update state if we are still in the same game session
+                     if (thisGameId === currentGameId) {
+                        uploadedVideoUrl = url;
+                        console.log("Background upload ready.");
+                     }
+                     return url;
+                 })
+                 .catch(err => {
+                     console.error("Background upload failed", err);
+                     return null;
+                 });
         };
         recorder.start();
     } catch(e) {
@@ -173,6 +197,11 @@ export async function init() {
     score = 0;
     UI.updateScore(0);
     
+    // Reset upload state for new game
+    uploadPromise = null;
+    uploadedVideoUrl = null;
+    currentGameId++;
+    
     startRecording();
 
     UI.showScreen('game');
@@ -183,42 +212,43 @@ export async function init() {
 }
 
 export async function shareReplay() {
-    if (!recordedBlob) {
-        if (!recorder) {
-             alert("Video recording is not supported on this device.");
-             return;
-        }
-        
-        // Ensure recording is stopped
-        if (recorder.state === 'recording') {
-             recorder.stop();
-             // Brief wait for onstop
-             await new Promise(r => setTimeout(r, 200));
-        }
+    if (recorder && recorder.state === 'recording') {
+         recorder.stop();
+    }
 
-        if (!recordedBlob) {
-             // Try waiting a bit more
-             for(let i=0; i<5; i++) {
-                if(recordedBlob) break;
-                await new Promise(r => setTimeout(r, 200));
-             }
-             if(!recordedBlob) {
-                alert("Recording not ready yet. Please try again.");
-                return;
-             }
-        }
+    // Wait for recordedBlob to be generated in onstop
+    if (!recordedBlob) {
+         for(let i=0; i<20; i++) {
+            if(recordedBlob) break;
+            await new Promise(r => setTimeout(r, 100));
+         }
+         if(!recordedBlob) {
+            alert("Recording processing failed. Please try again.");
+            return;
+         }
     }
 
     const originalText = UI.shareReplayButton.textContent;
     UI.shareReplayButton.disabled = true;
-    UI.shareReplayButton.textContent = "Uploading...";
+    UI.shareReplayButton.textContent = "Sharing...";
 
     try {
-        const fileExtension = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
-        const file = new File([recordedBlob], `replay.${fileExtension}`, { type: recordedBlob.type });
+        let url = uploadedVideoUrl;
 
-        const url = await window.websim.upload(file);
-        
+        // If upload is still in progress (or finished but variable not set yet), await the promise
+        if (!url && uploadPromise) {
+             url = await uploadPromise;
+        }
+
+        // Fallback if upload failed or didn't start automatically for some reason
+        if (!url) {
+            const fileExtension = recordedBlob.type.includes('mp4') ? 'mp4' : 'webm';
+            const file = new File([recordedBlob], `replay.${fileExtension}`, { type: recordedBlob.type });
+            url = await window.websim.upload(file);
+        }
+
+        if (!url) throw new Error("Upload failed to return a URL");
+
         await window.websim.postComment({
             content: `Check out my replay! Score: ${score}`,
             images: [url]
@@ -232,7 +262,10 @@ export async function shareReplay() {
     } catch (error) {
         console.error("Error sharing replay:", error);
         UI.shareReplayButton.textContent = "Error";
-        UI.shareReplayButton.disabled = false;
+        setTimeout(() => {
+             UI.shareReplayButton.disabled = false;
+             UI.shareReplayButton.textContent = originalText;
+        }, 2000);
     }
 }
 
@@ -304,7 +337,11 @@ function update(deltaTime) {
 function draw() {
     const ctx = UI.canvas.getContext('2d');
     const cameraY = camera.getY();
-    ctx.clearRect(0, 0, UI.canvas.width, UI.canvas.height);
+    
+    // Explicitly fill background for correct video recording colors
+    ctx.fillStyle = '#3d5a80';
+    ctx.fillRect(0, 0, UI.canvas.width, UI.canvas.height);
+    
     ctx.save();
     ctx.translate(0, -cameraY);
 
