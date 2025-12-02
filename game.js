@@ -147,7 +147,7 @@ export async function shareReplay() {
     if (!replay || !replay.frames.length) return;
 
     // Check MediaRecorder support
-    if (typeof MediaRecorder === 'undefined') {
+    if (typeof MediaRecorder === 'undefined' || !UI.replayCanvas.captureStream) {
         alert("Video recording is not supported on this device.");
         return;
     }
@@ -155,11 +155,15 @@ export async function shareReplay() {
     const duration = replay.getTotalDuration();
     if (duration <= 0) return;
 
+    const originalText = UI.shareReplayButton.textContent;
     UI.shareReplayButton.disabled = true;
     UI.shareReplayButton.textContent = "Recording...";
 
     // Restart playback to ensure we capture from the beginning
     replay.startPlayback();
+    
+    // Force one draw call to ensure canvas is ready
+    drawReplay(0);
 
     const stream = UI.replayCanvas.captureStream(30); // Capture at 30 FPS
     
@@ -171,18 +175,48 @@ export async function shareReplay() {
         mimeType = 'video/webm;codecs=vp9';
     }
 
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
+    let recorder;
+    try {
+        recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2500000 });
+    } catch (e) {
+        console.warn("MediaRecorder init failed with options, trying defaults", e);
+        try {
+            recorder = new MediaRecorder(stream);
+        } catch (e2) {
+            console.error("MediaRecorder init failed completely", e2);
+            alert("Could not start recording.");
+            UI.shareReplayButton.disabled = false;
+            UI.shareReplayButton.textContent = originalText;
+            return;
+        }
+    }
+
     const chunks = [];
 
     recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onerror = (e) => {
+        console.error("Recorder error:", e);
     };
 
     recorder.onstop = async () => {
+        if (chunks.length === 0) {
+            console.error("No video data recorded");
+            UI.shareReplayButton.textContent = "Error";
+            setTimeout(() => {
+                UI.shareReplayButton.disabled = false;
+                UI.shareReplayButton.textContent = originalText;
+            }, 2000);
+            return;
+        }
+
         UI.shareReplayButton.textContent = "Uploading...";
-        const blob = new Blob(chunks, { type: mimeType });
-        const fileExtension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const file = new File([blob], `replay.${fileExtension}`, { type: mimeType });
+        const finalMimeType = recorder.mimeType || mimeType || 'video/webm';
+        const blob = new Blob(chunks, { type: finalMimeType });
+        const fileExtension = finalMimeType.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File([blob], `replay.${fileExtension}`, { type: finalMimeType });
 
         try {
             // Upload the video file
@@ -194,6 +228,7 @@ export async function shareReplay() {
             });
             
             UI.shareReplayButton.textContent = "Shared!";
+            UI.shareReplayButton.disabled = false;
         } catch (error) {
             console.error("Error sharing replay:", error);
             UI.shareReplayButton.textContent = "Error";
@@ -208,7 +243,7 @@ export async function shareReplay() {
         if (recorder.state === 'recording') {
             recorder.stop();
         }
-    }, duration * 1000);
+    }, duration * 1000 + 200);
 }
 
 function update(deltaTime) {
